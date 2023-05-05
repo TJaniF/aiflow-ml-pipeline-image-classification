@@ -1,0 +1,10 @@
+.git
+.env
+.DS_Store
+airflow_settings.yaml
+__pycache__/
+astro
+z_experiments
+include/duckdb_database
+include/pretained_models/
+db_script.py
