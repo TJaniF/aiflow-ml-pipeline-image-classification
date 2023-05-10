@@ -28,7 +28,8 @@ IMAGE_FORMAT = ".jp*g"
 
 @dag(
     start_date=datetime(2023, 1, 1),
-    schedule=None,
+    schedule="@continuous",
+    max_active_runs=1,
     catchup=False,
 )
 def in_new_train_data():

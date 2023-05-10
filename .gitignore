@@ -8,3 +8,4 @@ z_experiments
 include/duckdb_database
 include/pretained_models/
 db_script.py
+include/minio

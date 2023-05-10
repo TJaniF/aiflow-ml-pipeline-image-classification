@@ -5,35 +5,14 @@ DESCRIPTION
 """
 
 from airflow import Dataset as AirflowDataset
-from airflow.decorators import dag, task_group, task
-from astro import sql as aql
-from astro.sql import get_value_list
-from astro.files import get_file_list
-from astro.sql.table import Table
+from airflow.decorators import dag, task
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.bash import BashOperator
-from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.models import Variable
-
-from collections import Counter
-import pandas as pd
 from pendulum import datetime
-import os
 import logging
-import requests
-import numpy as np
-from PIL import Image
 import duckdb
-import json
-import pickle
-import shutil
-import torch
 from airflow.sensors.base import PokeReturnValue
 
-from include.custom_operators.hugging_face import (
-    TestHuggingFaceImageClassifierOperator,
-    transform_function,
-)
 
 task_logger = logging.getLogger("airflow.task")
 
@@ -79,13 +58,22 @@ def deploy_best_model():
                 FROM model_results
                 WHERE test_set_num = (SELECT MAX(test_set_num) FROM model_results)
                 ORDER BY test_av_loss ASC
-                LIMIT 1;"""
-        ).fetchall()[0][0]
+                LIMIT 1;""" # want higher false negative - be more sensitive recall!!. maybe optimized for f score (long discussion on medium), want to use precision or recall
+        ).fetchall()[0][0] #ROC area
         con.close()
 
         return best_model_latest_test_set
 
-    ensure_baseline_ran() >> pick_best_model_from_db(db_path=DUCKDB_PATH)
+    @task
+    def deploy_model(model):
+        pass
+
+    (
+        start
+        >> ensure_baseline_ran()
+        >> deploy_model(pick_best_model_from_db(db_path=DUCKDB_PATH))
+        >> end
+    )
 
 
 deploy_best_model()

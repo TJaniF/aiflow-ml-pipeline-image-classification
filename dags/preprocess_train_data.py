@@ -5,7 +5,7 @@ DESCRIPTION
 """
 
 from airflow import Dataset
-from airflow.decorators import dag, task_group, task
+from airflow.decorators import dag, task
 from astro import sql as aql
 from astro.sql import get_value_list
 from astro.files import get_file_list

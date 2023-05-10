@@ -5,25 +5,15 @@ DESCRIPTION
 """
 
 from airflow import Dataset
-from airflow.decorators import dag, task_group, task
-from astro import sql as aql
-from astro.sql import get_value_list
+from airflow.decorators import dag, task
 from astro.files import get_file_list
-from astro.sql.table import Table
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.bash import BashOperator
 from airflow.models import Variable
 
-import pandas as pd
 from pendulum import datetime
-import os
 import logging
-import requests
-import numpy as np
-from PIL import Image
 import duckdb
-import json
-import pickle
 
 task_logger = logging.getLogger("airflow.task")
 

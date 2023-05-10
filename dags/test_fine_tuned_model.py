@@ -20,6 +20,7 @@ import json
 import pickle
 import shutil
 import torch
+from airflow.models import Variable
 
 from include.custom_operators.hugging_face import (
     TestHuggingFaceImageClassifierOperator,
@@ -161,15 +162,16 @@ def test_fine_tuned_model():
         model_name = context["ti"].xcom_pull(task_ids="test_classifier")["model_name"]
 
         con = duckdb.connect(db_path)
+        test_set_num = Variable.get("test_set_num")
 
         con.execute(
             f"""CREATE TABLE IF NOT EXISTS {table_name} 
-            (model_name TEXT PRIMARY KEY, timestamp DATETIME, test_av_loss FLOAT, test_accuracy FLOAT)"""
+            (model_name TEXT PRIMARY KEY, timestamp DATETIME, test_av_loss FLOAT, test_accuracy FLOAT, test_set_num INT)"""
         )
 
         con.execute(
-            f"INSERT OR REPLACE INTO {table_name} (model_name, timestamp, test_av_loss, test_accuracy) VALUES (?, ?, ?, ?) ",
-            (model_name, timestamp, test_av_loss, test_accuracy),
+            f"INSERT OR REPLACE INTO {table_name} (model_name, timestamp, test_av_loss, test_accuracy, test_set_num) VALUES (?, ?, ?, ?, ?) ",
+            (model_name, timestamp, test_av_loss, test_accuracy, test_set_num),
         )
 
         con.close()

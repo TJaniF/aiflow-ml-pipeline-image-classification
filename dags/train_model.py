@@ -102,8 +102,8 @@ def train_model():
 
     train_classifier = TrainHuggingFaceImageClassifierOperator(
         task_id="train_classifier",
-        model_name="microsoft/resnet-50",
-        criterion=torch.nn.CrossEntropyLoss(),
+        model_name="microsoft/resnet-50", # find newer one?
+        criterion=torch.nn.CrossEntropyLoss(),  # binary entropy loss!
         optimizer=torch.optim.Adam,
         local_images_filepaths=local_images_filepaths,
         labels=get_labels_from_duckdb.map(lambda x: x[0]),

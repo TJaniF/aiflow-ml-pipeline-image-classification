@@ -100,6 +100,8 @@ class TrainHuggingFaceImageClassifierOperator(BaseOperator):
 
     """
 
+    ui_color = "#91ed9d"
+
     template_fields = (
         "model_name",
         "criterion",
@@ -131,7 +133,7 @@ class TrainHuggingFaceImageClassifierOperator(BaseOperator):
         super().__init__(*args, **kwargs)
         self.model_name = model_name
         self.criterion = criterion
-        self.optimizer = optimizer
+        self.optimizer = optimizer #change optimizer
         self.local_images_filepaths = local_images_filepaths
         self.labels = labels
         self.num_classes = num_classes
@@ -154,16 +156,17 @@ class TrainHuggingFaceImageClassifierOperator(BaseOperator):
             num_workers=0,
         )
 
-        model = ResNetForImageClassification.from_pretrained(self.model_name)
+        # figure out how fine tuning happens inside hugging face
+        model = ResNetForImageClassification.from_pretrained(self.model_name) # does this do something optimized for fine tune or not?
         model.classifier[-1] = torch.nn.Linear(
             model.classifier[-1].in_features, self.num_classes
         )
 
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         model = model.to(device)
-        optimizer = self.optimizer(model.parameters(), lr=1e-4)
+        optimizer = self.optimizer(model.parameters(), lr=1e-4) ### lr is a hyperparameter learning rate to be adjusted. add as a parameter
 
-        for epoch in range(self.num_epochs):
+        for epoch in range(self.num_epochs): #num of epochs
             model.train()
             running_loss = 0.0
             running_corrects = 0
@@ -205,6 +208,8 @@ class TestHuggingFaceImageClassifierOperator(BaseOperator):
 
 
     """
+
+    ui_color = "#ebab34"
 
     template_fields = (
         "model_name",
