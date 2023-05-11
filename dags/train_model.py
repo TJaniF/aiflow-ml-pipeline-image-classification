@@ -13,10 +13,7 @@ from astro.sql import get_value_list
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from pendulum import datetime
-
 import shutil
-from torch.nn import BCEWithLogitsLoss
-from torch.optim import Adam
 
 from include.custom_operators.hugging_face import (
     FineTuneHuggingFaceBinaryImageClassifierOperator,
@@ -83,15 +80,13 @@ def train_model():
     train_classifier = FineTuneHuggingFaceBinaryImageClassifierOperator(
         task_id="train_classifier",
         model_name=BASE_MODEL_NAME,
-        criterion=BCEWithLogitsLoss(),
-        optimizer=Adam,
         local_images_filepaths=local_images_filepaths,
         labels=get_labels_from_duckdb.map(lambda x: x[0]),
-        learning_rate=0.01,
+        learning_rate=0.0023,
         model_save_dir=FINE_TUNED_MODEL_PATHS + "/{{ ts }}/",
         train_transform_function=standard_transform_function,
-        batch_size=10,
-        num_epochs=2,
+        batch_size=32,
+        num_epochs=10,
         shuffle=True,
         outlets=[AirflowDataset("new_model_trained")],
     )

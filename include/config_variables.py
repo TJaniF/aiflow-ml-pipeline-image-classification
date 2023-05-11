@@ -4,11 +4,17 @@ S3_BUCKET_NAME = "myexamplebucketone"
 AWS_CONN_ID = "aws_default"
 IMAGE_FORMAT = ".jp*g"
 
-S3_IN_TRAIN_FOLDER_NAME = "in_train_data"
+# normal vs glioma settings
+S3_IN_TRAIN_FOLDER_NAME = "in_train_data_ng"
+S3_TRAIN_FOLDER_NAME = "train_data_ng"
+S3_IN_TEST_FOLDER_NAME = "in_test_data_ng"
+S3_TEST_FOLDER_NAME = "test_data_ng"
+
+# meningioma vs glioma settings
+"""S3_IN_TRAIN_FOLDER_NAME = "in_train_data"
 S3_TRAIN_FOLDER_NAME = "train_data"
 S3_IN_TEST_FOLDER_NAME = "in_test_data"
-S3_TEST_FOLDER_NAME = "test_data"
-
+S3_TEST_FOLDER_NAME = "test_data"""
 
 # DuckDB configurations
 DB_CONN_ID = "duckdb_default"
@@ -25,7 +31,7 @@ POKE_INTERVAL = 2
 BASE_MODEL_NAME = "microsoft/resnet-50"
 LOCAL_TEMP_TRAIN_FOLDER = "include/train"
 LOCAL_TEMP_TEST_FOLDER = "include/test"
-LABEL_TO_INT_MAP = {"glioma": 0, "meningioma": 1}
+LABEL_TO_INT_MAP = {"normal": 0, "glioma": 1}
 FINE_TUNED_MODEL_PATHS = "include/fine_tuned_models"
 KEY_METRIC = "auc"
 KEY_METRIC_ASC_DESC = "DESC"
@@ -34,9 +40,9 @@ KEY_METRIC_ASC_DESC = "DESC"
 SLACK_CONNECTION_ID = "slack_default"
 SLACK_CHANNEL = "alerts"
 SLACK_MESSAGE = """
-**Model Test Successful** :tada:
+:tada: Model Test Successful :tada:
 
-The {{ ti.task_id }} task finished testing the model: {{ ti.xcom_pull(task_ids='get_latest_fine_tuned_modelpath') }}!
+The {{ ti.task_id }} task finished testing the model: {{ ti.xcom_pull(task_ids='test_classifier')['model_name'] }}!
 
 Fine-tuned model results:
 Average test loss: {{ ti.xcom_pull(task_ids='test_classifier')['average_test_loss'] }}

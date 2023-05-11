@@ -17,7 +17,6 @@ from airflow.models import Variable
 from collections import Counter
 from pendulum import datetime
 import shutil
-from torch.nn import BCELoss
 
 from include.custom_operators.hugging_face import (
     TestHuggingFaceBinaryImageClassifierOperator,
@@ -99,7 +98,6 @@ def test_baseline_model():
     test_classifier = TestHuggingFaceBinaryImageClassifierOperator(
         task_id="test_classifier",
         model_name=BASE_MODEL_NAME,
-        criterion=BCELoss(),
         local_images_filepaths=local_images_filepaths,
         labels=get_labels_from_duckdb.map(lambda x: x[0]),
         test_transform_function=standard_transform_function,

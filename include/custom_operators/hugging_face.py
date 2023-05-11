@@ -1,10 +1,11 @@
 from airflow.models.baseoperator import BaseOperator
-import torch
 from torch.utils.data import DataLoader
 from transformers import ResNetForImageClassification
 import os
 import numpy as np
-import torch
+from torch import tensor, device as tdevice, cuda, round as tround, sigmoid, no_grad
+from torch.nn import BCELoss, Linear, BCEWithLogitsLoss
+from torch.optim import Adam 
 from torch.utils.data import Dataset
 from PIL import Image
 import numpy as np
@@ -76,7 +77,7 @@ class CustomImageDataset(Dataset):
     def __getitem__(self, idx):
         image_path = self.images_paths[idx]
         label = self.labels[idx]
-        label_tensor = torch.tensor(label)
+        label_tensor = tensor(label)
 
         image = Image.open(image_path)
 
@@ -92,7 +93,7 @@ class FineTuneHuggingFaceBinaryImageClassifierOperator(BaseOperator):
 
     :param model_name: name of the model to use as a string. Can reference a public HuggingFace model
     or be the path to a locally saved model.
-    :param criterion: loss function.
+    :param criterion: loss function. Default: BCEWithLogitsLoss().
     :param optimizer: model optimizer. Default: Adam.
     :param local_images_filepaths: list of paths to the training images (list of str).
     :param labels: list of labels for the training set (list of floats or ints).
@@ -127,10 +128,10 @@ class FineTuneHuggingFaceBinaryImageClassifierOperator(BaseOperator):
     def __init__(
         self,
         model_name: str,
-        criterion,
-        optimizer,
         local_images_filepaths: list,
         labels: list,
+        optimizer=Adam,
+        criterion = BCEWithLogitsLoss(),
         learning_rate: float = 0.001,
         model_save_dir: str = "/",
         train_transform_function: callable = None,
@@ -187,7 +188,7 @@ class FineTuneHuggingFaceBinaryImageClassifierOperator(BaseOperator):
 
         print(f"Fetched model: {self.model_name}")
 
-        model.classifier[-1] = torch.nn.Linear(
+        model.classifier[-1] = Linear(
             model.classifier[-1].in_features, self.num_classes
         )
 
@@ -206,7 +207,7 @@ class FineTuneHuggingFaceBinaryImageClassifierOperator(BaseOperator):
         print("All layers except final ones frozen!")
 
         # set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = tdevice("cuda" if cuda.is_available() else "cpu")
         model = model.to(device)
 
         for epoch in range(self.num_epochs):
@@ -220,7 +221,7 @@ class FineTuneHuggingFaceBinaryImageClassifierOperator(BaseOperator):
                 loss.backward()
                 optimizer.step()
                 optimizer.zero_grad()
-                predictions = torch.round(torch.sigmoid(logits))
+                predictions = tround(sigmoid(logits))
 
                 print(f"Epoch: {epoch} / Step: {num_step}  loss: {loss.item()}")
                 print(
@@ -245,7 +246,7 @@ class TestHuggingFaceBinaryImageClassifierOperator(BaseOperator):
 
     :param model_name: name of the model to use as a string. Can reference a public HuggingFace model
     or be the path to a locally saved model.
-    :param criterion: loss function.
+    :param criterion: loss function. Default BCELoss().
     :param local_images_filepaths: list of paths to the testing images (list of str).
     :param labels: list of labels for the testing set (list of floats or ints).
     :param train_transform_function: transform function for training images.
@@ -272,9 +273,9 @@ class TestHuggingFaceBinaryImageClassifierOperator(BaseOperator):
     def __init__(
         self,
         model_name: str,
-        criterion,
         local_images_filepaths: list,
         labels: list,
+        criterion = BCELoss(),
         test_transform_function: callable = None,
         batch_size: int = 32,
         shuffle: bool = False,
@@ -323,14 +324,14 @@ class TestHuggingFaceBinaryImageClassifierOperator(BaseOperator):
 
         print(f"Fetch model: {self.model_name}")
 
-        model.classifier[-1] = torch.nn.Linear(
+        model.classifier[-1] = Linear(
             model.classifier[-1].in_features, self.num_classes
         )
 
         print(f"Model target set to {self.num_classes} classes.")
 
         # set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        device = tdevice("cuda" if cuda.is_available() else "cpu")
         model = model.to(device)
 
         # start model evaluation
@@ -342,14 +343,14 @@ class TestHuggingFaceBinaryImageClassifierOperator(BaseOperator):
 
         print("Starting model evaluation...")
 
-        with torch.no_grad():
+        with no_grad():
             for images, labels in test_loader:
                 images = images.to(device)
                 labels = labels.to(device)
                 labels = labels.unsqueeze(1).float()
 
                 outputs = model(images)
-                probabilities = torch.sigmoid(outputs.logits)
+                probabilities = sigmoid(outputs.logits)
 
                 predictions += (probabilities > 0.5).float().cpu().numpy().tolist()
                 true_labels += labels.cpu().numpy().tolist()

@@ -17,7 +17,7 @@ from airflow.providers.slack.notifications.slack_notifier import SlackNotifier
 import pendulum
 import os
 import shutil
-from torch.nn import BCELoss
+
 
 # import utility functions and variables from local files
 from include.custom_operators.hugging_face import (
@@ -111,7 +111,6 @@ def test_fine_tuned_model():
         model_name=get_latest_fine_tuned_model(
             fine_tuned_models_folder=FINE_TUNED_MODEL_PATHS
         ),
-        criterion=BCELoss(),
         local_images_filepaths=local_images_filepaths,
         labels=get_labels_from_duckdb.map(lambda x: x[0]),
         test_transform_function=standard_transform_function,

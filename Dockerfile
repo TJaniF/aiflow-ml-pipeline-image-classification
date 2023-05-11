@@ -1,3 +1,5 @@
-FROM quay.io/astronomer/astro-runtime:8.0.0
+FROM quay.io/astronomer/astro-runtime:8.1.0
 
 ENV AIRFLOW__CORE__ALLOWED_DESERIALIZATION_CLASSES = airflow\.* astro\.*
+ENV AIRFLOW__CORE__DAGBAG_IMPORT_TIMEOUT=180
+ENV AIRFLOW__CORE__DAG_FILE_PROCESSOR_TIMEOUT=180
