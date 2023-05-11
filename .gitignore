@@ -9,3 +9,8 @@ include/duckdb_database
 include/pretained_models/
 db_script.py
 include/minio
+include/model_debugging/test_full
+include/model_debugging/train_full
+include/model_debugging/test_trainer
+include/test 
+include/train

@@ -1,49 +1,31 @@
 """
-### TITLE
+### ML pipeline DAG that prepares a set of image paths and labels
 
-DESCRIPTION
+This DAG fetches a list of file names from a specific S3 location and creates
+a table in a local DuckDB to store these references. A separate task retrieves the
+labels for the images and stores them in the same table.
+
+Within the ML pipeline repository this DAG creates the table for the current train data.
 """
 
 from airflow import Dataset
 from airflow.decorators import dag, task
-from astro import sql as aql
-from astro.sql import get_value_list
 from astro.files import get_file_list
-from astro.sql.table import Table
 from airflow.operators.empty import EmptyOperator
 from airflow.operators.bash import BashOperator
 
-import pandas as pd
 from pendulum import datetime
-import os
-import logging
-import requests
-import numpy as np
-from PIL import Image
 import duckdb
-import json
-import pickle
 
-task_logger = logging.getLogger("airflow.task")
-
-TRAIN_FILEPATH = "include/train"
-TEST_FILEPATH = "include/test"
-FILESYSTEM_CONN_ID = "local_file_default"
-DB_CONN_ID = "duckdb_default"
-REPORT_TABLE_NAME = "reporting_table"
-TEST_TABLE_NAME = "test_table"
-
-S3_BUCKET_NAME = "myexamplebucketone"
-S3_IN_FOLDER_NAME = "in_train_data"
-S3_TRAIN_FOLDER_NAME = "train_data"
-AWS_CONN_ID = "aws_default"
-IMAGE_FORMAT = ".jpeg"
-TRAIN_DATA_TABLE_NAME = "train_data"
-DUCKDB_PATH = "include/duckdb_database"
-DUCKDB_POOL_NAME = "duckdb_pool"
-
-
-LABEL_TO_INT_MAP = {"glioma": 0, "meningioma": 1}
+from include.config_variables import (
+    S3_BUCKET_NAME,
+    S3_TRAIN_FOLDER_NAME,
+    AWS_CONN_ID,
+    DUCKDB_PATH,
+    TRAIN_DATA_TABLE_NAME,
+    DUCKDB_POOL_NAME,
+    LABEL_TO_INT_MAP,
+)
 
 
 @dag(
@@ -58,6 +40,8 @@ def preprocess_train_data():
         outlets=[Dataset(f"duckdb://{DUCKDB_PATH}/{TRAIN_DATA_TABLE_NAME}")],
     )
 
+    # create an Airflow pool for all tasks writing to DuckDB (if it does not exist yet)
+    # see also https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/pools.html
     create_duckdb_pool = BashOperator(
         task_id="create_duckdb_pool",
         bash_command=f"airflow pools list | grep -q '{DUCKDB_POOL_NAME}' || airflow pools set {DUCKDB_POOL_NAME} 1 'Pool for duckdb'",
@@ -67,12 +51,14 @@ def preprocess_train_data():
     # Load train file ref into DuckDB #
     # ------------------------------- #
 
+    # list the files in the S3 bucket
     list_train_files = get_file_list(
         task_id="list_train_files",
         path=f"s3://{S3_BUCKET_NAME}/{S3_TRAIN_FOLDER_NAME}",
         conn_id=AWS_CONN_ID,
     )
 
+    # create a DuckDB table
     @task(pool=DUCKDB_POOL_NAME)
     def create_table(table_name, db_path):
         con = duckdb.connect(db_path)
@@ -81,12 +67,14 @@ def preprocess_train_data():
             (image_s3_key TEXT PRIMARY KEY, timestamp DATETIME, label INT)"""
         )
 
+    # retrieve labels, in this case from the file names
     @task
     def get_train_labels(label_to_int_map, file_path):
         str_label = file_path.split("/")[-1].split(" ")[0]
         int_label = label_to_int_map[str_label]
         return int_label
 
+    # write the references to the training files to duckdb together with the correct label
     @task(pool=DUCKDB_POOL_NAME)
     def load_file_references_to_duckdb(db_path, table_name, data_to_insert, **context):
         image_s3_key = data_to_insert[0]
@@ -100,10 +88,12 @@ def preprocess_train_data():
 
         con.close()
 
+    # call labelling function with mapped input (one task per file in S3)
     train_labels = get_train_labels.partial(label_to_int_map=LABEL_TO_INT_MAP).expand(
         file_path=list_train_files.map(lambda x: x.path)
     )
 
+    # set Airflow dependencies
     (
         start
         >> create_duckdb_pool

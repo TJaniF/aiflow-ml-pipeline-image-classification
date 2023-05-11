@@ -1,7 +1,11 @@
 """
-### TITLE
+### ML pipeline DAG that prepares a set of image paths and labels
 
-DESCRIPTION
+This DAG fetches a list of file names from a specific S3 location and creates
+a table in a local DuckDB to store these references. A separate task retrieves the
+labels for the images and stores them in the same table.
+
+Within the ML pipeline repository this DAG creates the table for the current test data.
 """
 
 from airflow import Dataset
@@ -12,28 +16,18 @@ from airflow.operators.bash import BashOperator
 from airflow.models import Variable
 
 from pendulum import datetime
-import logging
 import duckdb
 
-task_logger = logging.getLogger("airflow.task")
 
-
-TEST_FILEPATH = "include/test"
-FILESYSTEM_CONN_ID = "local_file_default"
-DB_CONN_ID = "duckdb_default"
-REPORT_TABLE_NAME = "reporting_table"
-TEST_TABLE_NAME = "test_table"
-
-S3_BUCKET_NAME = "myexamplebucketone"
-S3_TEST_FOLDER_NAME = "test_data"
-AWS_CONN_ID = "aws_default"
-IMAGE_FORMAT = ".jpeg"
-TEST_DATA_TABLE_NAME = "test_data"
-DUCKDB_PATH = "include/duckdb_database"
-DUCKDB_POOL_NAME = "duckdb_pool"
-
-
-LABEL_TO_INT_MAP = {"glioma": 0, "meningioma": 1}
+from include.config_variables import (
+    S3_BUCKET_NAME,
+    S3_TEST_FOLDER_NAME,
+    AWS_CONN_ID,
+    DUCKDB_PATH,
+    TEST_DATA_TABLE_NAME,
+    DUCKDB_POOL_NAME,
+    LABEL_TO_INT_MAP,
+)
 
 
 @dag(
@@ -45,6 +39,8 @@ def preprocess_test_data():
     start = EmptyOperator(task_id="start")
     end = EmptyOperator(task_id="end")
 
+    # create an Airflow pool for all tasks writing to DuckDB (if it does not exist yet)
+    # see also https://airflow.apache.org/docs/apache-airflow/stable/administration-and-deployment/pools.html
     create_duckdb_pool = BashOperator(
         task_id="create_duckdb_pool",
         bash_command=f"airflow pools list | grep -q '{DUCKDB_POOL_NAME}' || airflow pools set {DUCKDB_POOL_NAME} 1 'Pool for duckdb'",
@@ -54,12 +50,14 @@ def preprocess_test_data():
     # Load test file ref into DuckDB #
     # ------------------------------- #
 
+    # list the files in the S3 bucket
     list_test_files = get_file_list(
         task_id="list_test_files",
         path=f"s3://{S3_BUCKET_NAME}/{S3_TEST_FOLDER_NAME}",
         conn_id=AWS_CONN_ID,
     )
 
+    # create a DuckDB table
     @task(pool=DUCKDB_POOL_NAME)
     def create_table(table_name, db_path):
         con = duckdb.connect(db_path)
@@ -89,6 +87,8 @@ def preprocess_test_data():
 
         con.close()
 
+    # within this Airflow instance every test set will receive a number, incrementing
+    # by 1 with all additions to the test set
     @task(
         outlets=[Dataset(f"duckdb://{DUCKDB_PATH}/{TEST_DATA_TABLE_NAME}")],
     )

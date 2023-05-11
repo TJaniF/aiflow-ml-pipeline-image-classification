@@ -1,7 +1,11 @@
 """
-### TITLE
+### DAG testing a binary HuggingFace image classifier using a custom operator
 
-DESCRIPTION
+This DAG loads testing images from an S3 bucket and tests a HuggingFace
+binary image classification model with them. 
+The TestHuggingFaceBinaryImageClassifierOperator is a custom operator located in
+the include folder of this ML pipeline example repository.
+In the ML pipeline repository this DAG will test the fine-tuned model.
 """
 
 from airflow import Dataset as AirflowDataset
@@ -9,64 +13,33 @@ from airflow.decorators import dag, task
 from astro.sql import get_value_list
 from airflow.operators.empty import EmptyOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
+from airflow.providers.slack.notifications.slack_notifier import SlackNotifier
 import pendulum
 import os
-import logging
-import requests
-import numpy as np
-from PIL import Image
-import duckdb
-import json
-import pickle
 import shutil
-import torch
-from airflow.models import Variable
+from torch.nn import BCELoss
 
+# import utility functions and variables from local files
 from include.custom_operators.hugging_face import (
-    TestHuggingFaceImageClassifierOperator,
-    transform_function,
+    TestHuggingFaceBinaryImageClassifierOperator,
 )
-
-from airflow.providers.slack.notifications.slack_notifier import SlackNotifier
-
-SLACK_CONNECTION_ID = "slack_default"
-SLACK_CHANNEL = "alerts"
-SLACK_MESSAGE = """
-**Model Test Successful** :tada:
-
-The {{ ti.task_id }} task finished testing the model: {{ ti.xcom_pull(task_ids='get_latest_fine_tuned_modelpath') }}!
-
-Test-result:
-Average test loss: {{ ti.xcom_pull(task_ids='test_classifier')['average_test_loss'] }}
-Test accuracy: {{ ti.xcom_pull(task_ids='test_classifier')['test_accuracy'] }}
-
-Comparison:
-Baseline accuracy of the test set: {{ var.value.get('baseline_accuracy', 'Not defined') }}
-Pre-fine-tuning average test loss: {{ var.value.get('baseline_model_av_loss', 'Not defined') }}
-Pre-fine-tuning test accuracy:  {{ var.value.get('baseline_model_accuracy', 'Not defined') }}
-"""
-
-task_logger = logging.getLogger("airflow.task")
-
-TRAIN_FILEPATH = "include/train"
-TEST_FILEPATH = "include/test"
-FILESYSTEM_CONN_ID = "local_file_default"
-DB_CONN_ID = "duckdb_default"
-REPORT_TABLE_NAME = "reporting_table"
-TEST_TABLE_NAME = "test_table"
-
-S3_BUCKET_NAME = "myexamplebucketone"
-S3_IN_FOLDER_NAME = "in_train_data"
-S3_TRAIN_FOLDER_NAME = "train_data"
-AWS_CONN_ID = "aws_default"
-IMAGE_FORMAT = ".jpeg"
-TEST_DATA_TABLE_NAME = "test_data"
-DUCKDB_PATH = "include/duckdb_database"
-DUCKDB_POOL_NAME = "duckdb_pool"
-
-LABEL_TO_INT_MAP = {"glioma": 0, "meningioma": 1}
-LOCAL_TEMP_TEST_FOLDER = "include/test"
-RESULTS_TABLE_NAME = "model_results"
+from include.custom_operators.utils.utils import (
+    standard_transform_function,
+    write_all_model_metrics_to_duckdb,
+)
+from include.config_variables import (
+    FINE_TUNED_MODEL_PATHS,
+    SLACK_CHANNEL,
+    SLACK_CONNECTION_ID,
+    SLACK_MESSAGE,
+    DB_CONN_ID,
+    AWS_CONN_ID,
+    TEST_DATA_TABLE_NAME,
+    DUCKDB_PATH,
+    DUCKDB_POOL_NAME,
+    LOCAL_TEMP_TEST_FOLDER,
+    RESULTS_TABLE_NAME,
+)
 
 
 @dag(
@@ -78,6 +51,7 @@ def test_fine_tuned_model():
     start = EmptyOperator(task_id="start")
     end = EmptyOperator(task_id="end")
 
+    # get list of images keys from the test table in DuckDB
     get_image_s3_keys_from_duckdb = get_value_list(
         task_id="get_image_s3_keys_from_duckdb",
         sql=f"SELECT image_s3_key FROM {TEST_DATA_TABLE_NAME};",
@@ -85,6 +59,7 @@ def test_fine_tuned_model():
         pool=DUCKDB_POOL_NAME,
     )
 
+    # get corresponding labels from the test table in DuckDB
     get_labels_from_duckdb = get_value_list(
         task_id="get_labels_from_duckdb",
         sql=f"SELECT label FROM {TEST_DATA_TABLE_NAME};",
@@ -92,6 +67,7 @@ def test_fine_tuned_model():
         pool=DUCKDB_POOL_NAME,
     )
 
+    # load test images from S3 into a temporary folder
     @task
     def load_test_images(keys):
         hook = S3Hook(aws_conn_id=AWS_CONN_ID)
@@ -112,32 +88,36 @@ def test_fine_tuned_model():
         get_image_s3_keys_from_duckdb.map(lambda x: x[0])
     )
 
+    # load the latest fine tuned model from local storage
     @task
-    def get_latest_fine_tuned_modelpath():
-        models_dir = "include/pretrained_models"
+    def get_latest_fine_tuned_model(fine_tuned_models_folder):
+        models_dir = fine_tuned_models_folder
         models = []
         for dir in os.listdir(models_dir):
             models.append({"folder_name": dir, "timestamp": pendulum.parse(dir)})
         if not models:
             return None
         return (
-            "include/pretrained_models/"
+            f"{fine_tuned_models_folder}/"
             + sorted(models, key=lambda m: m["timestamp"], reverse=True)[0][
                 "folder_name"
             ]
             + "/"
         )
 
-    test_classifier = TestHuggingFaceImageClassifierOperator(
+    # test the fine-tuned model
+    test_classifier = TestHuggingFaceBinaryImageClassifierOperator(
         task_id="test_classifier",
-        model_name=get_latest_fine_tuned_modelpath(),
-        criterion=torch.nn.CrossEntropyLoss(),
+        model_name=get_latest_fine_tuned_model(
+            fine_tuned_models_folder=FINE_TUNED_MODEL_PATHS
+        ),
+        criterion=BCELoss(),
         local_images_filepaths=local_images_filepaths,
         labels=get_labels_from_duckdb.map(lambda x: x[0]),
-        num_classes=2,
-        test_transform_function=transform_function,
-        batch_size=32,
+        test_transform_function=standard_transform_function,
+        batch_size=500,
         shuffle=False,
+        # if this task is successful send a slack notification
         on_success_callback=SlackNotifier(
             slack_conn_id=SLACK_CONNECTION_ID,
             text=SLACK_MESSAGE,
@@ -146,35 +126,15 @@ def test_fine_tuned_model():
         outlets=[AirflowDataset("new_model_tested")],
     )
 
+    # delete temporary files
     @task
     def delete_local_test_files(folder_path):
         shutil.rmtree(folder_path)
 
+    # write model results into a results table in duckdb
     @task(pool=DUCKDB_POOL_NAME)
     def write_model_results_to_duckdb(db_path, table_name, **context):
-        timestamp = context["ti"].xcom_pull(task_ids="test_classifier")["timestamp"]
-        test_av_loss = context["ti"].xcom_pull(task_ids="test_classifier")[
-            "average_test_loss"
-        ]
-        test_accuracy = context["ti"].xcom_pull(task_ids="test_classifier")[
-            "test_accuracy"
-        ]
-        model_name = context["ti"].xcom_pull(task_ids="test_classifier")["model_name"]
-
-        con = duckdb.connect(db_path)
-        test_set_num = Variable.get("test_set_num")
-
-        con.execute(
-            f"""CREATE TABLE IF NOT EXISTS {table_name} 
-            (model_name TEXT PRIMARY KEY, timestamp DATETIME, test_av_loss FLOAT, test_accuracy FLOAT, test_set_num INT)"""
-        )
-
-        con.execute(
-            f"INSERT OR REPLACE INTO {table_name} (model_name, timestamp, test_av_loss, test_accuracy, test_set_num) VALUES (?, ?, ?, ?, ?) ",
-            (model_name, timestamp, test_av_loss, test_accuracy, test_set_num),
-        )
-
-        con.close()
+        write_all_model_metrics_to_duckdb(db_path, table_name, **context)
 
     (
         start

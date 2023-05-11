@@ -1,61 +1,43 @@
 """
-### TITLE
+### DAG testing a binary HuggingFace image classifier using a custom operator
 
-DESCRIPTION
+This DAG loads testing images from an S3 bucket and tests a HuggingFace
+binary image classification model with them. 
+The TestHuggingFaceBinaryImageClassifierOperator is a custom operator located in
+the include folder of this ML pipeline example repository.
+In the ML pipeline repository this DAG will test the baseline model.
 """
 
 from airflow import Dataset as AirflowDataset
-from airflow.decorators import dag, task_group, task
-from astro import sql as aql
+from airflow.decorators import dag, task
 from astro.sql import get_value_list
-from astro.files import get_file_list
-from astro.sql.table import Table
 from airflow.operators.empty import EmptyOperator
-from airflow.operators.bash import BashOperator
 from airflow.providers.amazon.aws.hooks.s3 import S3Hook
 from airflow.models import Variable
-
 from collections import Counter
-import pandas as pd
 from pendulum import datetime
-import os
-import logging
-import requests
-import numpy as np
-from PIL import Image
-import duckdb
-import json
-import pickle
 import shutil
-import torch
+from torch.nn import BCELoss
 
 from include.custom_operators.hugging_face import (
-    TestHuggingFaceImageClassifierOperator,
-    transform_function,
+    TestHuggingFaceBinaryImageClassifierOperator,
 )
 
-task_logger = logging.getLogger("airflow.task")
+from include.custom_operators.utils.utils import (
+    standard_transform_function,
+    write_all_model_metrics_to_duckdb,
+)
 
-TRAIN_FILEPATH = "include/train"
-TEST_FILEPATH = "include/test"
-FILESYSTEM_CONN_ID = "local_file_default"
-DB_CONN_ID = "duckdb_default"
-REPORT_TABLE_NAME = "reporting_table"
-TEST_TABLE_NAME = "test_table"
-
-S3_BUCKET_NAME = "myexamplebucketone"
-S3_IN_FOLDER_NAME = "in_train_data"
-S3_TRAIN_FOLDER_NAME = "train_data"
-AWS_CONN_ID = "aws_default"
-IMAGE_FORMAT = ".jpeg"
-TEST_DATA_TABLE_NAME = "test_data"
-DUCKDB_PATH = "include/duckdb_database"
-DUCKDB_POOL_NAME = "duckdb_pool"
-
-LABEL_TO_INT_MAP = {"glioma": 0, "meningioma": 1}
-LOCAL_TEMP_TEST_FOLDER = "include/test"
-RESULTS_TABLE_NAME = "model_results"
-MODEL_NAME = "microsoft/resnet-50"
+from include.config_variables import (
+    DB_CONN_ID,
+    AWS_CONN_ID,
+    TEST_DATA_TABLE_NAME,
+    DUCKDB_PATH,
+    DUCKDB_POOL_NAME,
+    LOCAL_TEMP_TEST_FOLDER,
+    RESULTS_TABLE_NAME,
+    BASE_MODEL_NAME
+)
 
 
 @dag(
@@ -88,7 +70,7 @@ def test_baseline_model():
         baseline_accuracy = count[most_common] / len(labels)
         Variable.set("baseline_accuracy", baseline_accuracy)
 
-        task_logger.info(f"Baseline accuracy of the test set is: {baseline_accuracy}")
+        print(f"Baseline accuracy of the test set is: {baseline_accuracy}")
 
         return baseline_accuracy
 
@@ -114,15 +96,14 @@ def test_baseline_model():
         get_image_s3_keys_from_duckdb.map(lambda x: x[0])
     )
 
-    test_classifier = TestHuggingFaceImageClassifierOperator(
+    test_classifier = TestHuggingFaceBinaryImageClassifierOperator(
         task_id="test_classifier",
-        model_name=MODEL_NAME,
-        criterion=torch.nn.CrossEntropyLoss(),
+        model_name=BASE_MODEL_NAME,
+        criterion=BCELoss(),
         local_images_filepaths=local_images_filepaths,
         labels=get_labels_from_duckdb.map(lambda x: x[0]),
-        num_classes=2,
-        test_transform_function=transform_function,
-        batch_size=32,
+        test_transform_function=standard_transform_function,
+        batch_size=500,
         shuffle=False,
     )
 
@@ -134,7 +115,7 @@ def test_baseline_model():
     def set_baseline_model_variables(**context):
         baseline_model_accuracy = context["ti"].xcom_pull(
             task_ids="test_classifier",
-        )["test_accuracy"]
+        )["accuracy"]
         baseline_model_av_loss = context["ti"].xcom_pull(
             task_ids="test_classifier",
         )["average_test_loss"]
@@ -142,32 +123,10 @@ def test_baseline_model():
         Variable.set("baseline_model_accuracy", baseline_model_accuracy)
         Variable.set("baseline_model_av_loss", baseline_model_av_loss)
 
+    # write model results into a results table in duckdb
     @task(pool=DUCKDB_POOL_NAME)
     def write_model_results_to_duckdb(db_path, table_name, **context):
-        timestamp = context["ti"].xcom_pull(task_ids="test_classifier")["timestamp"]
-        test_av_loss = context["ti"].xcom_pull(task_ids="test_classifier")[
-            "average_test_loss"
-        ]
-        test_accuracy = context["ti"].xcom_pull(task_ids="test_classifier")[
-            "test_accuracy"
-        ]
-        model_name = context["ti"].xcom_pull(task_ids="test_classifier")["model_name"]
-
-        test_set_num = Variable.get("test_set_num")
-
-        con = duckdb.connect(db_path)
-
-        con.execute(
-            f"""CREATE TABLE IF NOT EXISTS {table_name} 
-            (model_name TEXT PRIMARY KEY, timestamp DATETIME, test_av_loss FLOAT, test_accuracy FLOAT, test_set_num INT)"""
-        )
-
-        con.execute(
-            f"INSERT OR REPLACE INTO {table_name} (model_name, timestamp, test_av_loss, test_accuracy, test_set_num) VALUES (?, ?, ?, ?, ?) ",
-            (model_name, timestamp, test_av_loss, test_accuracy, test_set_num),
-        )
-
-        con.close()
+        write_all_model_metrics_to_duckdb(db_path, table_name, **context)
 
     (
         start
