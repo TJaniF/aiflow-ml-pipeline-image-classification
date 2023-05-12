@@ -33,8 +33,6 @@ LOCAL_TEMP_TRAIN_FOLDER = "include/train"
 LOCAL_TEMP_TEST_FOLDER = "include/test"
 LABEL_TO_INT_MAP = {"normal": 0, "glioma": 1}
 FINE_TUNED_MODEL_PATHS = "include/fine_tuned_models"
-KEY_METRIC = "auc"
-KEY_METRIC_ASC_DESC = "DESC"
 
 # Slack config
 SLACK_CONNECTION_ID = "slack_default"

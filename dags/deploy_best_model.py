@@ -5,17 +5,19 @@
 from airflow import Dataset as AirflowDataset
 from airflow.decorators import dag, task
 from airflow.operators.empty import EmptyOperator
+from astro import sql as aql
 from airflow.models import Variable
 from pendulum import datetime
-import duckdb
+from astro.sql.table import Table
 from airflow.sensors.base import PokeReturnValue
+import pandas as pd
 
 from include.config_variables import (
-    KEY_METRIC,
-    KEY_METRIC_ASC_DESC,
     DUCKDB_POOL_NAME,
-    DUCKDB_PATH
+    DB_CONN_ID,
+    RESULTS_TABLE_NAME,
 )
+
 
 @dag(
     start_date=datetime(2023, 1, 1),
@@ -33,30 +35,28 @@ def deploy_best_model():
         return PokeReturnValue(is_done=baseline_model_exists, xcom_value="poke_return")
 
     # pick the best model from the duckdb records for the latest test set
-    @task(pool=DUCKDB_POOL_NAME)
-    def pick_best_model_from_db(db_path):
-        con = duckdb.connect(db_path)
-        best_model_latest_test_set = con.execute(
-            f"""SELECT model_name
-                FROM model_results
-                WHERE test_set_num = (SELECT MAX(test_set_num) FROM model_results)
-                ORDER BY {KEY_METRIC} {KEY_METRIC_ASC_DESC}
+    @aql.transform(pool=DUCKDB_POOL_NAME)
+    def pick_best_model(in_table):
+        return """SELECT model_name
+                FROM {{ in_table }}
+                WHERE test_set_num = (SELECT MAX(test_set_num) FROM {{ in_table }})
+                ORDER BY auc DESC
                 LIMIT 1;"""
-        ).fetchall()[0][
-            0
-        ]
-        con.close()
 
-        return best_model_latest_test_set
+    @aql.dataframe
+    def deploy_model(df: pd.DataFrame):
+        print(df["model_name"])
 
-    @task
-    def deploy_model(model):
-        print(model)
+    aql.cleanup()
 
     (
         start
         >> ensure_baseline_ran()
-        >> deploy_model(pick_best_model_from_db(db_path=DUCKDB_PATH))
+        >> deploy_model(
+            df=pick_best_model(
+                in_table=Table(conn_id=DB_CONN_ID, name=RESULTS_TABLE_NAME),
+            )
+        )
         >> end
     )
 
