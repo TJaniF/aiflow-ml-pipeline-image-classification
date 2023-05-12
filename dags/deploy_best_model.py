@@ -47,18 +47,15 @@ def deploy_best_model():
     def deploy_model(df: pd.DataFrame):
         print(df["model_name"])
 
+    model_deploy = deploy_model(
+        df=pick_best_model(
+            in_table=Table(conn_id=DB_CONN_ID, name=RESULTS_TABLE_NAME),
+        )
+    )
+
     aql.cleanup()
 
-    (
-        start
-        >> ensure_baseline_ran()
-        >> deploy_model(
-            df=pick_best_model(
-                in_table=Table(conn_id=DB_CONN_ID, name=RESULTS_TABLE_NAME),
-            )
-        )
-        >> end
-    )
+    (start >> ensure_baseline_ran() >> model_deploy >> end)
 
 
 deploy_best_model()
