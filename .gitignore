@@ -15,3 +15,4 @@ include/model_debugging/test_trainer
 include/test 
 include/train
 duckdb_database
+duckdb_database.wal
