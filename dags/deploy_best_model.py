@@ -48,7 +48,7 @@ def deploy_best_model():
         con.close()
 
         return best_model_latest_test_set
-
+    
     @task
     def deploy_model(model):
         print(model)

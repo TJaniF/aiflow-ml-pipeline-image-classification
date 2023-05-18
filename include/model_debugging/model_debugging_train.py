@@ -10,7 +10,8 @@ from torchvision import transforms
 from torch.utils.data import DataLoader, Dataset
 from transformers import ResNetForImageClassification
 from PIL import Image
-
+from datasets import load_dataset
+from datasets.features.image import Image as HFImage
 
 def transform_function(image):
     """A function normalizing images to the same size,
@@ -151,7 +152,7 @@ class TrainHuggingFaceBinaryImageClassifierOperator(BaseOperator):
         self.shuffle = shuffle
         self.num_workers_data_loader = num_workers_data_loader
         self.ignore_mismatched_sizes_resnet = ignore_mismatched_sizes_resnet
-        self.num_classes = 1
+        self.num_classes = 2
 
     def execute(self):
         # loading the train set from list of image paths and list of labels
@@ -160,6 +161,48 @@ class TrainHuggingFaceBinaryImageClassifierOperator(BaseOperator):
             labels=self.labels,
             transform_function=self.train_transform_function,
         )
+
+        from PIL import Image
+        from torchvision import transforms as T
+
+        def transform_function_2(examples):
+            transformed_images = []
+            for image in examples["image"]:
+                if image.mode == "RGB":
+                    transform = T.Compose(
+                        [
+                            T.Resize((224, 224)),
+                            T.ToTensor(),
+                            T.Normalize(
+                                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                            ),
+                        ]
+                    )
+                elif image.mode == "L":
+                    transform = T.Compose(
+                        [
+                            T.Resize((224, 224)),
+                            T.Grayscale(num_output_channels=3),
+                            T.ToTensor(),
+                            T.Normalize(
+                                mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225]
+                            ),
+                        ]
+                    )
+                else:
+                    raise ValueError("Unsupported image mode: %s" % image.mode)
+                
+                # Apply the transform to the image and add to list
+                transformed_images.append(transform(image))
+
+            examples["pixel_values"] = transformed_images
+            return examples
+
+
+        dataset = load_dataset("imagefolder", data_dir="toy_data")
+        dataset = dataset.map(transform_function_2,remove_columns=["image"], batched=True)
+
+        print(dataset)
 
         print(f"Successfully created the Train Dataset! Length: {len(train_dataset)}")
 
@@ -180,52 +223,55 @@ class TrainHuggingFaceBinaryImageClassifierOperator(BaseOperator):
             ignore_mismatched_sizes=self.ignore_mismatched_sizes_resnet,
         )
 
-        print(f"Fetch model: {self.model_name}")
-
-        model.classifier[-1] = torch.nn.Linear(
-            model.classifier[-1].in_features, self.num_classes
-        )
-
-        print(f"Model target set to {self.num_classes} classes.")
-
         # freeze all layers except for the final ones
         for name, param in model.named_parameters():
             if "classifier" not in name:
                 param.requires_grad = False
 
-        # initialize optimizer to only train final layers
-        optimizer = self.optimizer(
-            filter(lambda p: p.requires_grad, model.parameters()), lr=self.learning_rate
+        from transformers import TrainingArguments
+
+        training_args = TrainingArguments(output_dir="test_trainer")
+
+        import numpy as np
+        import evaluate
+
+        metric = evaluate.load("accuracy")
+        
+
+        def compute_metrics(eval_pred):
+            logits, labels = eval_pred
+            predictions = np.argmax(logits, axis=-1)
+            return metric.compute(predictions=predictions, references=labels)
+        
+        from transformers import TrainingArguments, Trainer
+
+        # specify training arguments
+        training_args = TrainingArguments(
+            output_dir='results',   # output directory
+            num_train_epochs=30,      # total number of training epochs
+            per_device_train_batch_size=64,   # batch size per device during training
+            per_device_eval_batch_size=32,    # batch size for evaluation
+            learning_rate=0.02,               # learning rate
+            warmup_steps=500,                 # number of warmup steps for learning rate scheduler
+            weight_decay=0.01,                # strength of weight decay
+            logging_strategy='steps',         
+            logging_steps=10,   
+            logging_dir='logs'
         )
 
-        print("All layers except final ones frozen!")
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=dataset['train'],
+            eval_dataset=dataset['test'],
+            compute_metrics=compute_metrics,
+            
+        )
 
-        # set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
+        trainer.train()
 
-        print("Starting model training...")
 
-        for epoch in range(self.num_epochs):
-            for num_step, batch in enumerate(train_loader):
-                images, labels = batch
-                images = images.to(device)
-                labels = labels.to(device)
-                outputs = model(images)
-                logits = outputs.logits.squeeze(-1)
-                loss = self.criterion(logits, labels.float())
-                loss.backward()
-                optimizer.step()
-                optimizer.zero_grad()
-                predictions = torch.round(torch.sigmoid(logits))
 
-                print(f"Epoch: {epoch} / Step: {num_step}  loss: {loss.item()}")
-                print(
-                    f"    Predictions: {[int(x) for x in predictions.cpu().detach().numpy()]}"
-                )
-                print(
-                    f"    True labels: {[int(x) for x in labels.cpu().detach().numpy()]}"
-                )
 
         # trainer.save_model("test_trainer/model1")
         if not os.path.exists(self.model_save_dir):
@@ -236,12 +282,58 @@ class TrainHuggingFaceBinaryImageClassifierOperator(BaseOperator):
         print(f"Model saved to {self.model_save_dir}")
 
 
+        from sklearn.metrics import precision_recall_fscore_support, accuracy_score, roc_auc_score, confusion_matrix
+
+        def compute_metrics(eval_pred):
+            logits, labels = eval_pred
+            predictions = np.argmax(logits, axis=-1)
+            precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='weighted')
+            accuracy = accuracy_score(labels, predictions)
+            auc = roc_auc_score(labels, predictions)
+            tn, fp, fn, tp = confusion_matrix(labels, predictions).ravel()
+
+            return {
+                "precision": precision,
+                "recall": recall,
+                "accuracy": accuracy,
+                "f1_score": f1,
+                "false_positives": fp,
+                "false_negatives": fn,
+                "true_positives": tp,
+                "true_negatives": tn,
+                "auc": auc,
+            }
+
+         # Load model
+        from transformers import AutoModelForImageClassification
+
+        model = AutoModelForImageClassification.from_pretrained(self.model_save_dir)
+
+        # Create a new trainer for evaluation
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=dataset['train'],
+            eval_dataset=dataset['test'],
+            compute_metrics=compute_metrics,
+        )
+
+        # Evaluate model
+        results = trainer.evaluate()
+
+        # Print results
+        for key, value in results.items():
+            print(f"{key}: {value}")
+
+import logging
+
+logging.basicConfig(level=logging.INFO)
 
 ### SET YOUR PARAMETERS HERE ###
 
-files = ["train_toy/" + x for x in os.listdir("train_toy/")]
+files = ["toy_data/train/" + x for x in os.listdir("toy_data/train/")]
 labels = [
-    0 if file_name.split("/")[-1].split(" ")[0] == "meningioma" else 1
+    0 if file_name.split("/")[-1].split(" ")[0] == "glioma" else 1
     for file_name in files
 ]
 
@@ -253,7 +345,7 @@ train_classifier = TrainHuggingFaceBinaryImageClassifierOperator(
     local_images_filepaths=files,
     labels=labels,
     learning_rate=0.05,
-    model_save_dir="test_trainer/model_schwannoma_2",
+    model_save_dir="test_trainer/long_train_time",
     train_transform_function=transform_function,
     batch_size=10,
     num_epochs=2,

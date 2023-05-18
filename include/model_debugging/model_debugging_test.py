@@ -192,71 +192,49 @@ class TestHuggingFaceBinaryImageClassifierOperator(BaseOperator):
         self.num_classes = 1
 
     def execute(self, context=None):
-        # loading the test set from list of image paths and list of labels
-        test_dataset = CustomImageDataset(
-            images_paths=self.local_images_filepaths,
-            labels=self.labels,
-            transform_function=self.test_transform_function,
+
+        from sklearn.metrics import precision_recall_fscore_support, accuracy_score, roc_auc_score, confusion_matrix
+
+        def compute_metrics(eval_pred):
+            logits, labels = eval_pred
+            predictions = np.argmax(logits, axis=-1)
+            precision, recall, f1, _ = precision_recall_fscore_support(labels, predictions, average='binary')
+            accuracy = accuracy_score(labels, predictions)
+            auc = roc_auc_score(labels, predictions)
+            tn, fp, fn, tp = confusion_matrix(labels, predictions).ravel()
+
+            return {
+                "precision": precision,
+                "recall": recall,
+                "accuracy": accuracy,
+                "f1_score": f1,
+                "false_positives": fp,
+                "false_negatives": fn,
+                "true_positives": tp,
+                "true_negatives": tn,
+                "auc": auc,
+            }
+
+         # Load model
+        from transformers import AutoModelForImageClassification
+
+        model = AutoModelForImageClassification.from_pretrained(self.model_save_dir)
+
+        # Create a new trainer for evaluation
+        trainer = Trainer(
+            model=model,
+            args=training_args,
+            train_dataset=dataset['train'],
+            eval_dataset=dataset['test'],
+            compute_metrics=compute_metrics,
         )
 
-        print(f"Successfully created the Test Dataset! Length: {len(test_dataset)}")
+        # Evaluate model
+        results = trainer.evaluate()
 
-        # create the train loader
-
-        test_loader = DataLoader(
-            test_dataset,
-            batch_size=self.batch_size,
-            shuffle=self.shuffle,
-            num_workers=self.num_workers_data_loader,
-        )
-
-        print(f"Successfully created the Test DataLoader!")
-
-        # fetch model
-        model = ResNetForImageClassification.from_pretrained(
-            self.model_name, ignore_mismatched_sizes=self.ignore_mismatched_sizes_resnet
-        )
-
-        print(f"Fetch model: {self.model_name}")
-
-        model.classifier[-1] = torch.nn.Linear(
-            model.classifier[-1].in_features, self.num_classes
-        )
-
-        print(f"Model target set to {self.num_classes} classes.")
-
-        # set device
-        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        model = model.to(device)
-
-        # start model evaluation
-        model.eval()
-
-        test_loss = 0
-        predictions = []
-        true_labels = []
-
-        print("Starting model evaluation...")
-
-        with torch.no_grad():
-            for images, labels in test_loader:
-                images = images.to(device)
-                labels = labels.to(device)
-                labels = labels.unsqueeze(1).float()
-
-                outputs = model(images)
-                probabilities = torch.sigmoid(outputs.logits)
-
-                predictions += (probabilities > 0.5).float().cpu().numpy().tolist()
-                true_labels += labels.cpu().numpy().tolist()
-                
-
-        average_test_loss = test_loss / len(test_loader)
-        labels = np.array(self.labels)  
-        metrics = calculate_binary_classification_metrics(true_labels, predictions)
-        print(predictions)
-        print(true_labels)
-        print(f"Test Loss: {average_test_loss:.4f}, Metrics: {metrics}")
+        # Print results
+        for key, value in results.items():
+            print(f"{key}: {value}")
 
 
 ### SET YOUR PARAMETERS HERE ###
