@@ -44,8 +44,7 @@ def in_new_train_data():
         outlets=[Dataset(f"s3://{S3_BUCKET_NAME}/{S3_TRAIN_FOLDER_NAME}/")],
     )
 
-    # asynchronously wait for a file of IMAGE format to drop at a specific
-    # location in S3
+    # asynchronously wait for a file to drop in S3
     wait_for_new_training_data = S3KeySensorAsync(
         task_id="wait_for_training_data",
         bucket_key=f"{S3_IN_TRAIN_FOLDER_NAME}/*{IMAGE_FORMAT}",

@@ -1,49 +1,34 @@
 Overview
 ========
 
-Welcome to Astronomer! This project was generated after you ran 'astro dev init' using the Astronomer CLI. This readme describes the contents of the project, as well as how to run Apache Airflow on your local machine.
+Welcome to this example repository to get started creating combined ML and data pipelines with [Apache Airflow](https://airflow.apache.org/)! :rocket:
 
-Project Contents
-================
+This repository contains a fully functional data and ML orchestration pipeline that can be run locally with the [Astro CLI](https://docs.astronomer.io/astro/cli/install-cli).
 
-Your Astro project contains the following files and folders:
+This Airflow pipeline will perform model fine-tuning and testing using [S3](https://aws.amazon.com/s3/), [DuckDB](https://duckdb.org/) and [HuggingFace](https://huggingface.co/).
 
-- dags: This folder contains the Python files for your Airflow DAGs. By default, this directory includes two example DAGs:
-    - `example_dag_basic`: This DAG shows a simple ETL data pipeline example with three TaskFlow API tasks that run daily.
-    - `example_dag_advanced`: This advanced DAG showcases a variety of Airflow features like branching, Jinja templates, task groups and several Airflow operators.
-- Dockerfile: This file contains a versioned Astro Runtime Docker image that provides a differentiated Airflow experience. If you want to execute other commands or overrides at runtime, specify them here.
-- include: This folder contains any additional files that you want to include as part of your project. It is empty by default.
-- packages.txt: Install OS-level packages needed for your project by adding them to this file. It is empty by default.
-- requirements.txt: Install Python packages needed for your project by adding them to this file. It is empty by default.
-- plugins: Add custom or community plugins for your project to this file. It is empty by default.
-- airflow_settings.yaml: Use this local-only file to specify Airflow Connections, Variables, and Pools instead of entering them in the Airflow UI as you develop DAGs in this project.
+Use this repository to explore Airflow, experiment with your own DAGs and as a template for your own projects, as well as your own custom operators and task groups!
 
-Deploy Your Project Locally
-===========================
+This project was created with :heart: by [Astronomer](https://www.astronomer.io/).
 
-1. Start Airflow on your local machine by running 'astro dev start'.
+> If you are looking for an entry level written tutorial where you build your own first Airflow DAG from scratch check out: [Get started with Apache Airflow, Part 1: Write and run your first DAG](https://docs.astronomer.io/learn/get-started-with-airflow).
 
-This command will spin up 4 Docker containers on your machine, each for a different Airflow component:
+-------------------------------
 
-- Postgres: Airflow's Metadata Database
-- Webserver: The Airflow component responsible for rendering the Airflow UI
-- Scheduler: The Airflow component responsible for monitoring and triggering tasks
-- Triggerer: The Airflow component responsible for triggering deferred tasks
+How to use this repository
+==========================
 
-2. Verify that all 4 Docker containers were created by running 'docker ps'.
+Download the [Astro CLI](https://docs.astronomer.io/astro/cli/install-cli) to run Airflow locally in Docker. `astro` is the only package you will need to install.
 
-Note: Running 'astro dev start' will start your project with the Airflow Webserver exposed at port 8080 and Postgres exposed at port 5432. If you already have either of those ports allocated, you can either stop your existing Docker containers or change the port.
+If you are on a Mac, install the Astro CLI is as easy as the following steps:
 
-3. Access the Airflow UI for your local Airflow project. To do so, go to http://localhost:8080/ and log in with 'admin' for both your Username and Password.
+1. Check that you have [Docker Desktop](https://www.docker.com/products/docker-desktop/) and [Homebrew](https://brew.sh/) installed.
+2. Run `brew install astro`.
 
-You should also be able to access your Postgres Database at 'localhost:5432/postgres'.
+And that is it, you can now use the repository:
 
-Deploy Your Project to Astronomer
-=================================
-
-If you have an Astronomer account, pushing code to a Deployment on Astronomer is simple. For deploying instructions, refer to Astronomer documentation: https://docs.astronomer.io/cloud/deploy-code/
-
-Contact
-=======
-
-The Astronomer CLI is maintained with love by the Astronomer team. To report a bug or suggest a change, reach out to our support.
+1. Run `git clone https://github.com/TJaniF/airflow-ml-pipeline-image-classification.git` on your computer to create a local clone of this repository.
+2. Run `astro dev start` in your cloned repository.
+3. After your Astro project has started. View the Airflow UI at `localhost:8080`.
+4. Set your own variables pointing at your source data in `include/config_variables.py`.
+5. You likely will have to make some changes to the `standard_transform_function` depending on your source data, you can find it and other functions used in `include/utils/utils.py`.
